@@ -1,5 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models.dart';
 import 'widgets.dart';
@@ -22,7 +22,7 @@ class AllPropertiesScreen extends StatelessWidget {
     }
     return ListView.builder(
       itemCount: list.length,
-      itemBuilder: (_, i) => PropertyCard(property: list[i], width: null),
+      itemBuilder: (_, i) => PropertyCard(property: list[i]),
     );
   }
 
@@ -30,11 +30,12 @@ class AllPropertiesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget body;
     if (ownerId != null) {
-      body = StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('properties')
-            .where('ownerId', isEqualTo: ownerId)
-            .snapshots(),
+      body = FutureBuilder<List<dynamic>>(
+        future: Supabase.instance.client
+            .from('properties')
+            .select()
+            .eq('owner_id', ownerId!)
+            .order('created_at', ascending: false),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return const EmptyState(
@@ -43,11 +44,12 @@ class AllPropertiesScreen extends StatelessWidget {
               subtitle: 'Could not load your properties.',
             );
           }
-          if (!snapshot.hasData) return const LoadingView();
-          final list = snapshot.data!.docs
-              .map((d) => Property.fromMap(d.data(), d.id))
-              .toList()
-            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const LoadingView();
+          }
+          final list = (snapshot.data ?? [])
+              .map((data) => Property.fromMap(data))
+              .toList();
           return _list(list);
         },
       );
@@ -58,13 +60,11 @@ class AllPropertiesScreen extends StatelessWidget {
     return Scaffold(
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 4, 0),
+          // FIXED MARGIN HERE
+          padding: const EdgeInsets.all(20),
           child: Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.only(right: 16),
-                child: PageHeader(title: title),
-              ),
+              PageHeader(title: title),
               const SizedBox(height: 20),
               Expanded(child: body),
             ],

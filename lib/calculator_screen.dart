@@ -42,7 +42,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
                   const Text('Monthly payment',
                       style: TextStyle(color: Colors.white70)),
                   const SizedBox(height: 6),
-                  Text('\$${monthly.toStringAsFixed(2)}',
+                  Text('\TND ${monthly.toStringAsFixed(2)}',
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 32,
@@ -50,7 +50,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
                 ]),
               ),
               const SizedBox(height: 20),
-              _slider('Property price', '\$${price.toInt()}', price, 50000,
+              _slider('Property price', '\TND ${price.toInt()}', price, 50000,
                   1000000, (v) => setState(() => price = v)),
               _slider('Down payment', '${down.toInt()}%', down, 0, 50,
                   (v) => setState(() => down = v)),

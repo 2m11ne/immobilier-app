@@ -1,6 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'chat_screen.dart';
 import 'constants.dart';
@@ -14,23 +13,34 @@ class MessagesScreen extends StatefulWidget {
 }
 
 class _MessagesScreenState extends State<MessagesScreen> {
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> _stream;
-  final String myId = FirebaseAuth.instance.currentUser!.uid;
-
-  @override
-  void initState() {
-    super.initState();
-    _stream = FirebaseFirestore.instance
-        .collection('chats')
-        .where('participants', arrayContains: myId)
-        .snapshots();
-  }
-
-  DateTime _time(Map<String, dynamic> data) =>
-      (data['lastTime'] as Timestamp?)?.toDate() ?? DateTime.now();
-
   @override
   Widget build(BuildContext context) {
+    final user = Supabase.instance.client.auth.currentUser;
+
+    if (user == null) {
+      return const Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              children: [
+                PageHeader(title: 'Messages', showBack: false),
+                Expanded(
+                  child: EmptyState(
+                    icon: Icons.lock_outline,
+                    title: 'Login required',
+                    subtitle: 'Please create an account to view your messages.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final String myId = user.id;
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -40,57 +50,71 @@ class _MessagesScreenState extends State<MessagesScreen> {
               const PageHeader(title: 'Messages', showBack: false),
               const SizedBox(height: 20),
               Expanded(
-                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                  stream: _stream,
+                // We listen to the CHATS table to get the list of conversations
+                child: StreamBuilder<List<Map<String, dynamic>>>(
+                  stream: Supabase.instance.client
+                      .from('chats')
+                      .stream(primaryKey: ['id']),
                   builder: (context, snapshot) {
                     if (snapshot.hasError) {
-                      return const EmptyState(
+                      return EmptyState(
                         icon: Icons.error_outline,
                         title: 'Something went wrong',
-                        subtitle: 'Could not load your conversations.',
+                        subtitle: '${snapshot.error}',
                       );
                     }
-                    if (!snapshot.hasData) return const LoadingView();
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const LoadingView();
+                    }
 
-                    final docs = snapshot.data!.docs
-                        .where((d) =>
-                            ((d.data()['lastMessage'] ?? '') as String)
-                                .isNotEmpty)
-                        .toList()
-                      ..sort((a, b) =>
-                          _time(b.data()).compareTo(_time(a.data())));
+                    final allChats = snapshot.data ?? [];
+                    
+                    // Filter chats where I am a participant
+                    final myChats = allChats.where((d) {
+                      final participants = List<String>.from(d['participants'] ?? []);
+                      return participants.contains(myId);
+                    }).toList();
 
-                    if (docs.isEmpty) {
+                    // Sort by last_time
+                    myChats.sort((a, b) {
+                      final timeA = a['last_time'] != null ? DateTime.tryParse(a['last_time']) ?? DateTime.now() : DateTime.now();
+                      final timeB = b['last_time'] != null ? DateTime.tryParse(b['last_time']) ?? DateTime.now() : DateTime.now();
+                      return timeB.compareTo(timeA);
+                    });
+
+                    if (myChats.isEmpty) {
                       return const EmptyState(
                         icon: Icons.chat_bubble_outline,
                         title: 'No conversations yet',
-                        subtitle:
-                            'Open a property and tap "Rent Now" to contact the owner.',
+                        subtitle: 'Open a property and tap "Rent Now" to contact the owner.',
                       );
                     }
 
                     return ListView.separated(
-                      itemCount: docs.length,
+                      itemCount: myChats.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (context, i) {
-                        final doc = docs[i];
-                        final data = doc.data();
-                        final participants =
-                            List<String>.from(data['participants'] ?? []);
+                        final data = myChats[i];
+                        final participants = List<String>.from(data['participants'] ?? []);
+                        
                         final otherId = participants.firstWhere(
                             (p) => p != myId,
                             orElse: () => myId);
-                        final names =
-                            Map<String, dynamic>.from(data['names'] ?? {});
-                        final otherName =
-                            (names[otherId] ?? 'User') as String;
+                            
+                        final names = Map<String, dynamic>.from(data['names'] ?? {});
+                        final otherName = (names[otherId] ?? 'User').toString();
+                        
+                        final lastTimeStr = data['last_time'] as String?;
+                        final lastTime = lastTimeStr != null 
+                            ? DateTime.tryParse(lastTimeStr) ?? DateTime.now()
+                            : DateTime.now();
 
                         return GestureDetector(
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (_) => ChatScreen(
-                                  chatId: doc.id, otherName: otherName),
+                                  chatId: data['id'], otherName: otherName),
                             ),
                           ),
                           child: Container(
@@ -101,9 +125,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                 radius: 24,
                                 backgroundColor: kTealLight,
                                 child: Text(
-                                    otherName.isEmpty
-                                        ? '?'
-                                        : otherName[0].toUpperCase(),
+                                    otherName.isEmpty ? '?' : otherName[0].toUpperCase(),
                                     style: const TextStyle(
                                         color: kTeal,
                                         fontWeight: FontWeight.w700,
@@ -120,15 +142,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                             color: kNavy,
                                             fontSize: 16)),
                                     const SizedBox(height: 4),
-                                    Text((data['lastMessage'] ?? '') as String,
+                                    Text((data['last_message'] ?? 'No messages yet') as String,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                        style:
-                                            const TextStyle(color: kGrey)),
+                                        style: const TextStyle(color: kGrey)),
                                   ],
                                 ),
                               ),
-                              Text(formatTime(_time(data)),
+                              Text(formatTime(lastTime),
                                   style: const TextStyle(
                                       color: kGrey, fontSize: 12)),
                             ]),

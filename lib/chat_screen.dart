@@ -1,6 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'constants.dart';
 import 'models.dart';
@@ -12,16 +11,22 @@ String chatIdFor(String a, String b) {
 }
 
 Future<void> sendChatMessage(String chatId, String text) async {
-  final me = FirebaseAuth.instance.currentUser!;
-  final chatRef = FirebaseFirestore.instance.collection('chats').doc(chatId);
+  final user = Supabase.instance.client.auth.currentUser;
+  if (user == null) return;
 
-  final message = ChatMessage(
-      id: '', text: text, senderId: me.uid, createdAt: DateTime.now());
-  await chatRef.collection('messages').add(message.toMap());
-  await chatRef.set({
-    'lastMessage': text,
-    'lastTime': FieldValue.serverTimestamp(),
-  }, SetOptions(merge: true));
+  final supabase = Supabase.instance.client;
+  final now = DateTime.now().toIso8601String();
+
+  await supabase.from('messages').insert({
+    'chat_id': chatId,
+    'sender_id': user.id,
+    'text': text,
+  });
+
+  await supabase.from('chats').update({
+    'last_message': text,
+    'last_time': now,
+  }).eq('id', chatId);
 }
 
 Future<void> startChat(
@@ -30,17 +35,31 @@ Future<void> startChat(
   required String otherName,
   String? firstMessage,
 }) async {
-  final me = FirebaseAuth.instance.currentUser!;
-  final myName = (me.displayName != null && me.displayName!.isNotEmpty)
-      ? me.displayName!
-      : (me.email ?? 'User');
-  final chatId = chatIdFor(me.uid, otherUid);
+  final user = Supabase.instance.client.auth.currentUser;
+  if (user == null) return;
+  
+  final supabase = Supabase.instance.client;
+  
+  String myName = 'User';
+  try {
+    final profile = await supabase.from('profiles').select('name').eq('id', user.id).maybeSingle();
+    myName = profile?['name']?.toString() ?? (user.email ?? 'User').split('@').first;
+  } catch (_) {
+    myName = (user.email ?? 'User').split('@').first;
+  }
+                 
+  final chatId = chatIdFor(user.id, otherUid);
   final navigator = Navigator.of(context);
 
-  await FirebaseFirestore.instance.collection('chats').doc(chatId).set({
-    'participants': [me.uid, otherUid],
-    'names': {me.uid: myName, otherUid: otherName},
-  }, SetOptions(merge: true));
+  final existingChat = await supabase.from('chats').select().eq('id', chatId).maybeSingle();
+  
+  if (existingChat == null) {
+    await supabase.from('chats').insert({
+      'id': chatId,
+      'participants': [user.id, otherUid],
+      'names': {user.id: myName, otherUid: otherName},
+    });
+  }
 
   if (firstMessage != null) await sendChatMessage(chatId, firstMessage);
 
@@ -59,18 +78,17 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final controller = TextEditingController();
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> _stream;
-  final String myId = FirebaseAuth.instance.currentUser!.uid;
+  late final Stream<List<Map<String, dynamic>>> _stream;
+  final String myId = Supabase.instance.client.auth.currentUser!.id;
 
   @override
   void initState() {
     super.initState();
-    _stream = FirebaseFirestore.instance
-        .collection('chats')
-        .doc(widget.chatId)
-        .collection('messages')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
+    _stream = Supabase.instance.client
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .eq('chat_id', widget.chatId)
+        .order('created_at', ascending: false);
   }
 
   @override
@@ -83,6 +101,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = controller.text.trim();
     if (text.isEmpty) return;
     controller.clear();
+    FocusScope.of(context).unfocus();
     try {
       await sendChatMessage(widget.chatId, text);
     } catch (e) {
@@ -101,20 +120,24 @@ class _ChatScreenState extends State<ChatScreen> {
               PageHeader(title: widget.otherName),
               const SizedBox(height: 20),
               Expanded(
-                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                child: StreamBuilder<List<Map<String, dynamic>>>(
                   stream: _stream,
                   builder: (context, snapshot) {
                     if (snapshot.hasError) {
-                      return const EmptyState(
+                      return EmptyState(
                         icon: Icons.error_outline,
-                        title: 'Something went wrong',
-                        subtitle: 'Could not load the messages.',
+                        title: 'Error loading messages',
+                        subtitle: '${snapshot.error}',
                       );
                     }
-                    if (!snapshot.hasData) return const LoadingView();
-                    final messages = snapshot.data!.docs
-                        .map((d) => ChatMessage.fromMap(d.data(), d.id))
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const LoadingView();
+                    }
+                    
+                    final messages = (snapshot.data ?? [])
+                        .map((d) => ChatMessage.fromMap(d))
                         .toList();
+                        
                     if (messages.isEmpty) {
                       return const EmptyState(
                         icon: Icons.chat_bubble_outline,
@@ -122,6 +145,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         subtitle: 'Say hello 👋',
                       );
                     }
+                    
                     return ListView.builder(
                       reverse: true,
                       itemCount: messages.length,
@@ -129,14 +153,12 @@ class _ChatScreenState extends State<ChatScreen> {
                         final m = messages[i];
                         final me = m.senderId == myId;
                         return Align(
-                          alignment:
-                              me ? Alignment.centerRight : Alignment.centerLeft,
+                          alignment: me ? Alignment.centerRight : Alignment.centerLeft,
                           child: Container(
                             margin: const EdgeInsets.only(bottom: 10),
                             padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
                             constraints: BoxConstraints(
-                                maxWidth:
-                                    MediaQuery.of(context).size.width * 0.72),
+                                maxWidth: MediaQuery.of(context).size.width * 0.72),
                             color: me ? kTeal : Colors.white,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
@@ -150,9 +172,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 Text(formatTime(m.createdAt),
                                     style: TextStyle(
                                         fontSize: 11,
-                                        color: me
-                                            ? Colors.white70
-                                            : kGrey)),
+                                        color: me ? Colors.white70 : kGrey)),
                               ],
                             ),
                           ),

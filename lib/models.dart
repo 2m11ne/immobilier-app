@@ -1,7 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-DateTime _toDate(dynamic value) =>
-    value is Timestamp ? value.toDate() : DateTime.now();
+DateTime _toDate(dynamic value) {
+  if (value == null) return DateTime.now();
+  if (value is String) return DateTime.parse(value);
+  if (value is DateTime) return value;
+  return DateTime.now();
+}
 
 class Property {
   final String id;
@@ -36,22 +38,22 @@ class Property {
     this.longitude,
   });
 
-  factory Property.fromMap(Map<String, dynamic> map, String id) {
+  factory Property.fromMap(Map<String, dynamic> map) {
     return Property(
-      id: id,
+      id: map['id']?.toString() ?? '',
       title: (map['title'] ?? '') as String,
       description: (map['description'] ?? '') as String,
       location: (map['location'] ?? '') as String,
-      imageUrl: (map['imageUrl'] ?? '') as String,
+      imageUrl: (map['image_url'] ?? '') as String,
       category: (map['category'] ?? 'Rent House') as String,
-      ownerId: (map['ownerId'] ?? '') as String,
-      ownerName: (map['ownerName'] ?? '') as String,
+      ownerId: (map['owner_id'] ?? '') as String,
+      ownerName: (map['owner_name'] ?? '') as String,
       price: ((map['price'] ?? 0) as num).toDouble(),
       bedrooms: ((map['bedrooms'] ?? 0) as num).toInt(),
       sqft: ((map['sqft'] ?? 0) as num).toInt(),
       latitude: (map['latitude'] as num?)?.toDouble(),
       longitude: (map['longitude'] as num?)?.toDouble(),
-      createdAt: _toDate(map['createdAt']),
+      createdAt: _toDate(map['created_at']),
     );
   }
 
@@ -60,16 +62,15 @@ class Property {
       'title': title,
       'description': description,
       'location': location,
-      'imageUrl': imageUrl,
+      'image_url': imageUrl,
       'category': category,
-      'ownerId': ownerId,
-      'ownerName': ownerName,
+      'owner_id': ownerId,
+      'owner_name': ownerName,
       'price': price,
       'bedrooms': bedrooms,
       'sqft': sqft,
       'latitude': latitude,
       'longitude': longitude,
-      'createdAt': FieldValue.serverTimestamp(),
     };
   }
 }
@@ -87,20 +88,20 @@ class ChatMessage {
     required this.createdAt,
   });
 
-  factory ChatMessage.fromMap(Map<String, dynamic> map, String id) {
+  factory ChatMessage.fromMap(Map<String, dynamic> map) {
     return ChatMessage(
-      id: id,
+      id: map['id']?.toString() ?? '',
       text: (map['text'] ?? '') as String,
-      senderId: (map['senderId'] ?? '') as String,
-      createdAt: _toDate(map['createdAt']),
+      senderId: (map['sender_id'] ?? '') as String,
+      createdAt: _toDate(map['created_at']),
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toMap(String chatId) {
     return {
+      'chat_id': chatId,
       'text': text,
-      'senderId': senderId,
-      'createdAt': FieldValue.serverTimestamp(),
+      'sender_id': senderId,
     };
   }
 }

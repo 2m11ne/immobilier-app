@@ -1,6 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'constants.dart';
 import 'models.dart';
@@ -14,16 +13,7 @@ class StatsScreen extends StatefulWidget {
 }
 
 class _StatsScreenState extends State<StatsScreen> {
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> _stream;
-  
-  // FIXED: Use nullable String so it doesn't crash for Visitors
-  String? get myId => FirebaseAuth.instance.currentUser?.uid;
-
-  @override
-  void initState() {
-    super.initState();
-    _stream = FirebaseFirestore.instance.collection('properties').snapshots();
-  }
+  String? get myId => Supabase.instance.client.auth.currentUser?.id;
 
   @override
   Widget build(BuildContext context) {
@@ -36,8 +26,11 @@ class _StatsScreenState extends State<StatsScreen> {
               const PageHeader(title: 'Statistics', showBack: false),
               const SizedBox(height: 24),
               Expanded(
-                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                  stream: _stream,
+                child: FutureBuilder<List<dynamic>>(
+                  future: Supabase.instance.client
+                      .from('properties')
+                      .select()
+                      .order('created_at', ascending: false),
                   builder: (context, snapshot) {
                     if (snapshot.hasError) {
                       return const EmptyState(
@@ -46,10 +39,12 @@ class _StatsScreenState extends State<StatsScreen> {
                         subtitle: 'Could not load the statistics.',
                       );
                     }
-                    if (!snapshot.hasData) return const LoadingView();
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const LoadingView();
+                    }
 
-                    final items = snapshot.data!.docs
-                        .map((d) => Property.fromMap(d.data(), d.id))
+                    final items = (snapshot.data ?? [])
+                        .map((data) => Property.fromMap(data))
                         .toList();
                     if (items.isEmpty) {
                       return const EmptyState(
@@ -60,7 +55,6 @@ class _StatsScreenState extends State<StatsScreen> {
                     }
 
                     final total = items.length;
-                    // FIXED: Handle null user
                     final mine = myId == null 
                         ? 0 
                         : items.where((p) => p.ownerId == myId).length;

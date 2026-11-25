@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'constants.dart';
 import 'models.dart';
 import 'details_screen.dart';
@@ -70,6 +71,35 @@ class NetImg extends StatelessWidget {
         );
       },
       errorBuilder: (_, __, ___) => _placeholder(),
+    );
+  }
+}
+
+class Avatar extends StatelessWidget {
+  final String? url;
+  final String name;
+  final double radius;
+  const Avatar({super.key, this.url, required this.name, this.radius = 24});
+
+  @override
+  Widget build(BuildContext context) {
+    if (url != null && url!.isNotEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundImage: NetworkImage(url!),
+        backgroundColor: kTealLight,
+      );
+    }
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: kTeal,
+      child: Text(
+        name.isEmpty ? '?' : name[0].toUpperCase(),
+        style: TextStyle(
+            color: Colors.white,
+            fontSize: radius * 0.8,
+            fontWeight: FontWeight.w700),
+      ),
     );
   }
 }
@@ -312,60 +342,182 @@ class LoadingView extends StatelessWidget {
       );
 }
 
-class PropertyCard extends StatelessWidget {
+class PropertyCard extends StatefulWidget {
   final Property property;
   final double? width;
-  const PropertyCard({super.key, required this.property, this.width = 250});
+  final EdgeInsetsGeometry? margin;
+
+  const PropertyCard({
+    super.key,
+    required this.property,
+    this.width = double.infinity,
+    this.margin,
+  });
+
+  @override
+  State<PropertyCard> createState() => _PropertyCardState();
+}
+
+class _PropertyCardState extends State<PropertyCard> {
+  bool isFavorite = false;
+  bool loadingFav = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkFavorite();
+  }
+
+  Future<void> _checkFavorite() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      if (mounted) setState(() => loadingFav = false);
+      return;
+    }
+    try {
+      final res = await Supabase.instance.client
+          .from('favorites')
+          .select()
+          .eq('user_id', user.id)
+          .eq('property_id', widget.property.id)
+          .maybeSingle();
+      if (mounted) {
+        setState(() {
+          isFavorite = res != null;
+          loadingFav = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => loadingFav = false);
+    }
+  }
+
+  Future<void> _toggleFavorite() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      showMsg(context, 'Please login to add to favorites.');
+      return;
+    }
+    
+    setState(() => isFavorite = !isFavorite);
+
+    try {
+      if (isFavorite) {
+        await Supabase.instance.client
+            .from('favorites')
+            .insert({'user_id': user.id, 'property_id': widget.property.id});
+        if (mounted) showMsg(context, 'Added to favorites ❤️');
+      } else {
+        await Supabase.instance.client
+            .from('favorites')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('property_id', widget.property.id);
+        if (mounted) showMsg(context, 'Removed from favorites.');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => isFavorite = !isFavorite);
+        showMsg(context, 'Error: $e');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final p = property;
+    final p = widget.property;
     return GestureDetector(
       onTap: () => Navigator.push(context,
           MaterialPageRoute(builder: (_) => DetailsScreen(property: p))),
       child: Container(
-        width: width,
-        margin: const EdgeInsets.only(right: 16, bottom: 16),
-        padding: const EdgeInsets.all(12),
-        color: Colors.white,
+        width: widget.width,
+        margin: widget.margin ?? const EdgeInsets.only(bottom: 20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(10),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-                height: 160, width: double.infinity, child: NetImg(p.imageUrl)),
-            const SizedBox(height: 14),
-            Text(p.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w700, color: kNavy)),
-            const SizedBox(height: 10),
-            Row(children: [
-              const Icon(Icons.square_foot, size: 16, color: kTeal),
-              const SizedBox(width: 6),
-              Text('${p.sqft} sqft', style: const TextStyle(color: kGrey)),
-              const SizedBox(width: 14),
-              const Icon(Icons.monetization_on_outlined,
-                  size: 16, color: kTeal),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text('\$${money(p.price)}/Month',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: kGrey)),
+            Stack(
+              children: [
+                AspectRatio(
+                  aspectRatio: 16 / 10,
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                    child: NetImg(p.imageUrl),
+                  ),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: loadingFav
+                      ? const SizedBox.shrink()
+                      : GestureDetector(
+                          onTap: _toggleFavorite,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withAlpha(220),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              isFavorite ? Icons.favorite : Icons.favorite_border,
+                              color: isFavorite ? kRed : kNavy,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(p.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700, color: kNavy)),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    const Icon(Icons.square_foot, size: 16, color: kTeal),
+                    const SizedBox(width: 6),
+                    Text('${p.sqft} sqft', style: const TextStyle(color: kGrey)),
+                    const SizedBox(width: 14),
+                    const Icon(Icons.monetization_on_outlined,
+                        size: 16, color: kTeal),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text('${money(p.price)} TND/Month',
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: kGrey)),
+                    ),
+                  ]),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    const Icon(Icons.location_on_outlined, size: 16, color: kTeal),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(p.location,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: kGrey, fontSize: 13)),
+                    ),
+                  ]),
+                ],
               ),
-            ]),
-            const SizedBox(height: 10),
-            Row(children: [
-              const Icon(Icons.location_on_outlined, size: 16, color: kTeal),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(p.location,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: kGrey, fontSize: 13)),
-              ),
-            ]),
+            ),
           ],
         ),
       ),
